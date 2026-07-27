@@ -570,7 +570,7 @@ void RenderMainMenu() {
     ImGui::Dummy({0,r*2+10});
     const char* title="E C L I P S E";
     ImGui::SetCursorPosX((sw-ImGui::CalcTextSize(title).x)*0.5f);
-    ImGui::TextColored(COLOR_ACCENT,"%s",title);
+    ImGui::TextColored(COLOR_ACCENT,title);
     ImGui::Dummy({0,25});
     const char* tabs[]={"Visuals","Silent Aim","Misc"};
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,ImVec2(0,0));
@@ -779,75 +779,103 @@ void RenderOverlay() {
 }
 
 // ==========================================================
-// PUBLIC C API  (P/Invoke from Unity C#)
+// GL-CONTEXT-AWARE INIT
+// onCreate fires before Unity's GL context exists — ImGui_ImplOpenGL3_Init
+// will silently fail or crash if called there. Instead we lazy-init on the
+// first render call, which is guaranteed to be on the GL thread with a live
+// context. g_Initialized gates every subsequent call.
 // ==========================================================
-extern "C" {
-
-// Forward declaration
-bool injection_init();
-
-// OnCreate entry point — called from UnityPlayerActivity.onCreate()
-JNIEXPORT void JNICALL
-Java_com_pixellabs_pixelstrike3d_ImGuiPlugin_onCreate(JNIEnv*, jobject) {
-    LOGI("onCreate — com.pixellabs.pixelstrike3d");
-    InstallHooks();
-    injection_init();
-}
-
-bool injection_init() {
+static bool DoInit() {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
-    ImGuiIO& io=ImGui::GetIO();
-    io.DisplaySize=ImVec2(g_ScreenWidth,g_ScreenHeight);
-    io.DeltaTime=1.0f/60.0f;
-    io.IniFilename=nullptr;
-    if (!ImGui_ImplOpenGL3_Init("#version 300 es")) { LOGE("ImGui_ImplOpenGL3_Init failed"); return false; }
+    ImGuiIO& io = ImGui::GetIO();
+    io.DisplaySize = ImVec2(g_ScreenWidth, g_ScreenHeight);
+    io.DeltaTime   = 1.0f / 60.0f;
+    io.IniFilename = nullptr;
+    if (!ImGui_ImplOpenGL3_Init("#version 300 es")) {
+        LOGE("ImGui_ImplOpenGL3_Init failed — no GL context yet?");
+        ImGui::DestroyContext();
+        return false;
+    }
     ImGui::StyleColorsDark();
-    ImFontConfig cfg; cfg.SizePixels=28;
+    ImFontConfig cfg; cfg.SizePixels = 28.0f;
     io.Fonts->AddFontDefault(&cfg);
-    // Font texture upload handled automatically by ImGui_ImplOpenGL3_NewFrame in this imgui version
-    g_Initialized=true;
-    LOGI("injection_init OK. ImGui %s | GLES3 | arm64-v8a", IMGUI_VERSION);
+    g_Initialized = true;
+    LOGI("DoInit OK — ImGui %s | GLES3 | arm64-v8a", IMGUI_VERSION);
     return true;
 }
 
-void injection_shutdown() {
-    ImGui_ImplOpenGL3_Shutdown();
-    ImGui::DestroyContext();
-    g_Initialized=false;
+// ==========================================================
+// __attribute__((constructor)) — fires the moment dlopen loads the .so
+// GL context is NOT available here. Only safe to call non-GL work.
+// ==========================================================
+__attribute__((constructor))
+static void lib_main() {
+    LOGI("libinjection.so loaded — com.pixellabs.pixelstrike3d");
+    ArmSignalHandler();
+    // Hooks deferred — libil2cpp.so may not be mapped yet at dlopen time.
+    // InstallHooks() is called from onCreate once the Unity runtime is up.
 }
 
+// ==========================================================
+// PUBLIC C API
+// ==========================================================
+extern "C" {
+
+// OnCreate — Unity runtime is up, libil2cpp.so is mapped. Safe to hook.
+// GL context still not live here — DoInit() is NOT called here.
+JNIEXPORT void JNICALL
+Java_com_pixellabs_pixelstrike3d_ImGuiPlugin_onCreate(JNIEnv*, jobject) {
+    LOGI("onCreate fired — installing hooks");
+    InstallHooks();
+}
+
+// Called from Unity C# Update() — on the GL thread, context guaranteed live.
+// Lazy-inits ImGui on the very first call, then runs normally every frame.
 void injection_new_frame(float w, float h, float dt) {
-    g_ScreenWidth=w; g_ScreenHeight=h;
-    ImGuiIO& io=ImGui::GetIO();
-    io.DisplaySize=ImVec2(w,h);
-    io.DeltaTime=(dt>0)?dt:(1.0f/60.0f);
+    if (!g_Initialized) {
+        if (!DoInit()) return;  // retry next frame if GL not ready
+    }
+    g_ScreenWidth = w; g_ScreenHeight = h;
+    ImGuiIO& io = ImGui::GetIO();
+    io.DisplaySize = ImVec2(w, h);
+    io.DeltaTime   = (dt > 0.0f) ? dt : (1.0f / 60.0f);
     ImGui_ImplOpenGL3_NewFrame();
     ImGui::NewFrame();
     ApplyStyle();
 }
 
 void injection_render() {
-    RenderFloatingButton();   // always draws — handles its own toggle
+    if (!g_Initialized) return;
+    RenderFloatingButton();
     if (showMenu) RenderMainMenu();
     RenderOverlay();
     ImGui::Render();
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 }
 
-void injection_set_touch(float x, float y, bool touching) {
-    ImGui::GetIO().AddMousePosEvent(x,y);
-    ImGui::GetIO().AddMouseButtonEvent(0,touching);
+void injection_shutdown() {
+    if (!g_Initialized) return;
+    ImGui_ImplOpenGL3_Shutdown();
+    ImGui::DestroyContext();
+    g_Initialized = false;
 }
 
-void injection_set_shooting(bool s)  { g_IsShooting=s; }
-void injection_toggle_menu()         { showMenu=!showMenu; }
-bool injection_wants_mouse()         { return ImGui::GetIO().WantCaptureMouse; }
-bool injection_wants_keyboard()      { return ImGui::GetIO().WantCaptureKeyboard; }
-void injection_add_char(unsigned int c) { ImGui::GetIO().AddInputCharacter(c); }
+void injection_set_touch(float x, float y, bool touching) {
+    if (!g_Initialized) return;
+    ImGui::GetIO().AddMousePosEvent(x, y);
+    ImGui::GetIO().AddMouseButtonEvent(0, touching);
+}
+
+void injection_set_shooting(bool s)     { g_IsShooting = s; }
+void injection_toggle_menu()            { showMenu = !showMenu; }
+bool injection_wants_mouse()            { return g_Initialized && ImGui::GetIO().WantCaptureMouse; }
+bool injection_wants_keyboard()         { return g_Initialized && ImGui::GetIO().WantCaptureKeyboard; }
+void injection_add_char(unsigned int c) { if (g_Initialized) ImGui::GetIO().AddInputCharacter(c); }
 void injection_backspace() {
-    ImGui::GetIO().AddKeyEvent(ImGuiKey_Backspace,true);
-    ImGui::GetIO().AddKeyEvent(ImGuiKey_Backspace,false);
+    if (!g_Initialized) return;
+    ImGui::GetIO().AddKeyEvent(ImGuiKey_Backspace, true);
+    ImGui::GetIO().AddKeyEvent(ImGuiKey_Backspace, false);
 }
 
 } // extern "C"
