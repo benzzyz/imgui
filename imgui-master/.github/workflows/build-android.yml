@@ -1,0 +1,63 @@
+name: Build libinjection.so (Android ARM64)
+
+on:
+  push:
+    branches: [ master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install NDK r26d
+        run: |
+          echo "y" | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager "ndk;26.3.11579264"
+          echo "NDK_PATH=$ANDROID_SDK_ROOT/ndk/26.3.11579264" >> $GITHUB_ENV
+
+      - name: Configure CMake (arm64-v8a)
+        run: |
+          cmake \
+            -S unity_plugin \
+            -B unity_plugin/build \
+            -DCMAKE_TOOLCHAIN_FILE=${{ env.NDK_PATH }}/build/cmake/android.toolchain.cmake \
+            -DANDROID_ABI=arm64-v8a \
+            -DANDROID_PLATFORM=android-26 \
+            -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build unity_plugin/build --parallel
+
+      - name: Verify
+        run: |
+          file unity_plugin/build/libinjection.so
+          ls -lh unity_plugin/build/libinjection.so
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: libinjection-arm64-v8a
+          path: unity_plugin/build/libinjection.so
+          retention-days: 30
+
+      - name: Create Release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: "libinjection.so arm64-v8a (build ${{ github.run_number }})"
+          body: |
+            **com.pixellabs.pixelstrike3d**
+            ABI: arm64-v8a | Backend: OpenGL ES 3.0
+            Commit: ${{ github.sha }}
+
+            Unity: Assets/Plugins/Android/arm64-v8a/libinjection.so
+          files: unity_plugin/build/libinjection.so
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
