@@ -18,7 +18,6 @@ public class ImGuiUnityBridge : MonoBehaviour
     [DllImport(LIB)] static extern void injection_render();
     [DllImport(LIB)] static extern void injection_set_touch(float x, float y, bool touching);
     [DllImport(LIB)] static extern void injection_set_shooting(bool shooting);
-    [DllImport(LIB)] static extern void injection_toggle_menu();
     [DllImport(LIB)] static extern bool injection_wants_mouse();
     [DllImport(LIB)] static extern bool injection_wants_keyboard();
     [DllImport(LIB)] static extern void injection_add_char(uint c);
@@ -43,14 +42,6 @@ public class ImGuiUnityBridge : MonoBehaviour
     void Update()
     {
         if (!_initialized) return;
-
-        // 3-finger tap toggles Eclipse menu
-        if (Input.touchCount == 3) {
-            bool allBegan = true;
-            foreach (Touch t in Input.touches)
-                if (t.phase != TouchPhase.Began) { allBegan = false; break; }
-            if (allBegan) injection_toggle_menu();
-        }
 
         // Primary touch → ImGui mouse (Y flipped: Unity bottom-left → ImGui top-left)
         if (Input.touchCount > 0) {

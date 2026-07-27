@@ -1,9 +1,7 @@
-name: Build Android ARM64 .so
+name: Build libinjection.so (Android ARM64)
 
 on:
   push:
-    branches: [ master ]
-  pull_request:
     branches: [ master ]
   workflow_dispatch:
 
@@ -14,202 +12,21 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      - name: Create unity_plugin directory
-        run: mkdir -p unity_plugin
-
-      - name: Write CMakeLists.txt
-        run: |
-          cat > unity_plugin/CMakeLists.txt << 'CMAKE_EOF'
-          cmake_minimum_required(VERSION 3.22)
-          project(imgui_unity CXX)
-
-          set(CMAKE_CXX_STANDARD 17)
-          set(IMGUI_DIR ${CMAKE_CURRENT_SOURCE_DIR}/..)
-
-          add_library(imgui_unity SHARED
-              imgui_unity_plugin.cpp
-              ${IMGUI_DIR}/imgui.cpp
-              ${IMGUI_DIR}/imgui_draw.cpp
-              ${IMGUI_DIR}/imgui_tables.cpp
-              ${IMGUI_DIR}/imgui_widgets.cpp
-              ${IMGUI_DIR}/imgui_demo.cpp
-              ${IMGUI_DIR}/backends/imgui_impl_opengl3.cpp
-          )
-
-          target_include_directories(imgui_unity PRIVATE
-              ${IMGUI_DIR}
-              ${IMGUI_DIR}/backends
-          )
-
-          target_link_libraries(imgui_unity
-              android
-              log
-              EGL
-              GLESv3
-          )
-
-          target_compile_definitions(imgui_unity PRIVATE
-              IMGUI_IMPL_OPENGL_ES3
-              IMGUI_IMPL_OPENGL_LOADER_CUSTOM
-          )
-
-          set_target_properties(imgui_unity PROPERTIES
-              PREFIX ""
-              OUTPUT_NAME "libimgui_unity"
-              POSITION_INDEPENDENT_CODE ON
-          )
-          CMAKE_EOF
-
-      - name: Write imgui_unity_plugin.cpp
-        run: |
-          cat > unity_plugin/imgui_unity_plugin.cpp << 'CPP_EOF'
-          #include "imgui.h"
-          #include "imgui_impl_opengl3.h"
-          #include <GLES3/gl3.h>
-          #include <EGL/egl.h>
-          #include <android/log.h>
-          #include <jni.h>
-          #include <cstring>
-          #include <cstdio>
-
-          #define LOG_TAG "imgui_unity"
-          #define LOGI(...) __android_log_print(ANDROID_LOG_INFO,  LOG_TAG, __VA_ARGS__)
-          #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
-
-          // ── JNI OnCreate — com.pixellabs.pixelstrike3d ────────────────────────────
-          // Call this from your UnityPlayerActivity override's onCreate().
-          // GL context is not live yet here — imgui_unity_init() fires after Unity's
-          // renderer is up (wire it to a GL-ready callback or first Update() frame).
-          extern "C" JNIEXPORT void JNICALL
-          Java_com_pixellabs_pixelstrike3d_ImGuiPlugin_onCreate(JNIEnv* env, jobject thiz) {
-              LOGI("onCreate — com.pixellabs.pixelstrike3d — native layer alive");
-          }
-
-          extern "C" {
-
-          // ── Lifecycle ──────────────────────────────────────────────────────────────
-
-          bool imgui_unity_init() {
-              IMGUI_CHECKVERSION();
-              ImGui::CreateContext();
-
-              ImGuiIO& io = ImGui::GetIO();
-              io.DisplaySize = ImVec2(1080.0f, 1920.0f);
-              io.DeltaTime   = 1.0f / 60.0f;
-              io.IniFilename = nullptr;
-
-              if (!ImGui_ImplOpenGL3_Init("#version 300 es")) {
-                  LOGE("ImGui_ImplOpenGL3_Init failed");
-                  return false;
-              }
-
-              ImGui::StyleColorsDark();
-
-              ImFontConfig cfg;
-              cfg.SizePixels = 28.0f;
-              io.Fonts->AddFontDefault(&cfg);
-              ImGui_ImplOpenGL3_CreateFontsTexture();
-
-              LOGI("Initialized. ImGui %s | GLES3 | arm64-v8a", IMGUI_VERSION);
-              return true;
-          }
-
-          void imgui_unity_shutdown() {
-              ImGui_ImplOpenGL3_Shutdown();
-              ImGui::DestroyContext();
-              LOGI("Shutdown complete.");
-          }
-
-          // ── Per-frame ──────────────────────────────────────────────────────────────
-
-          void imgui_unity_new_frame(float display_w, float display_h, float delta_time) {
-              ImGuiIO& io = ImGui::GetIO();
-              io.DisplaySize = ImVec2(display_w, display_h);
-              io.DeltaTime   = (delta_time > 0.0f) ? delta_time : (1.0f / 60.0f);
-              ImGui_ImplOpenGL3_NewFrame();
-              ImGui::NewFrame();
-          }
-
-          void imgui_unity_render() {
-              ImGui::Render();
-              ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-          }
-
-          // ── Touch input ────────────────────────────────────────────────────────────
-
-          void imgui_unity_set_touch(float x, float y, bool touching) {
-              ImGuiIO& io = ImGui::GetIO();
-              io.AddMousePosEvent(x, y);
-              io.AddMouseButtonEvent(0, touching);
-          }
-
-          void imgui_unity_clear_touch() {
-              ImGui::GetIO().AddMouseButtonEvent(0, false);
-          }
-
-          void imgui_unity_add_input_character(unsigned int c) {
-              ImGui::GetIO().AddInputCharacter(c);
-          }
-
-          void imgui_unity_send_backspace() {
-              ImGuiIO& io = ImGui::GetIO();
-              io.AddKeyEvent(ImGuiKey_Backspace, true);
-              io.AddKeyEvent(ImGuiKey_Backspace, false);
-          }
-
-          // ── Query ──────────────────────────────────────────────────────────────────
-
-          bool imgui_unity_wants_keyboard() { return ImGui::GetIO().WantCaptureKeyboard; }
-          bool imgui_unity_wants_mouse()    { return ImGui::GetIO().WantCaptureMouse; }
-
-          // ── Proof-of-concept windows ───────────────────────────────────────────────
-
-          static bool s_show_demo  = true;
-          static bool s_show_probe = true;
-
-          void imgui_unity_draw_demo_window() {
-              if (s_show_demo) ImGui::ShowDemoWindow(&s_show_demo);
-          }
-
-          void imgui_unity_draw_probe_window(float fps, const char* scene_name, const char* device_model) {
-              if (!s_show_probe) return;
-              ImGui::SetNextWindowPos(ImVec2(20.0f, 20.0f), ImGuiCond_Once);
-              ImGui::SetNextWindowSize(ImVec2(380.0f, 160.0f), ImGuiCond_Once);
-              ImGui::Begin("PixelStrike3D ImGui Probe", &s_show_probe,
-                  ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar);
-              ImGui::Text("Scene:    %s", scene_name   ? scene_name   : "<none>");
-              ImGui::Text("Device:   %s", device_model ? device_model : "<unknown>");
-              ImGui::Text("FPS:      %.1f", fps);
-              ImGui::Separator();
-              ImGui::Text("Package:  com.pixellabs.pixelstrike3d");
-              ImGui::Text("ImGui:    %s",  IMGUI_VERSION);
-              ImGui::Text("Backend:  OpenGL ES 3.0");
-              ImGui::Text("ABI:      arm64-v8a");
-              ImGui::End();
-          }
-
-          } // extern "C"
-          CPP_EOF
-
-      # ── NDK setup ─────────────────────────────────────────────────────────
-      - name: Set up JDK 17
+      # Install JDK 17 first — sdkmanager requires it
+      - name: Setup JDK 17
         uses: actions/setup-java@v4
         with:
-          distribution: 'temurin'
           java-version: '17'
+          distribution: 'temurin'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install NDK r26d
+      # Download NDK directly — no sdkmanager, no version conflicts
+      - name: Download NDK r26d
         run: |
-          echo "y" | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager "ndk;26.3.11579264"
-          echo "NDK_PATH=$ANDROID_SDK_ROOT/ndk/26.3.11579264" >> $GITHUB_ENV
+          wget -q https://dl.google.com/android/repository/android-ndk-r26d-linux.zip
+          unzip -q android-ndk-r26d-linux.zip -d $HOME
+          echo "NDK_PATH=$HOME/android-ndk-r26d" >> $GITHUB_ENV
 
-      # ── Build ──────────────────────────────────────────────────────────────
       - name: Configure CMake (arm64-v8a)
         run: |
           cmake \
@@ -223,35 +40,30 @@ jobs:
       - name: Build
         run: cmake --build unity_plugin/build --parallel
 
-      # ── Verify ─────────────────────────────────────────────────────────────
-      - name: Verify .so
+      - name: Verify
         run: |
-          file unity_plugin/build/libimgui_unity.so
-          ls -lh unity_plugin/build/libimgui_unity.so
+          file unity_plugin/build/libinjection.so
+          ls -lh unity_plugin/build/libinjection.so
 
-      # ── Upload artifact (always) ────────────────────────────────────────────
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: libimgui_unity-arm64-v8a
-          path: unity_plugin/build/libimgui_unity.so
+          name: libinjection-arm64-v8a
+          path: unity_plugin/build/libinjection.so
           retention-days: 30
 
-      # ── GitHub Release (push to master only) ───────────────────────────────
       - name: Create Release
         if: github.event_name == 'push' && github.ref == 'refs/heads/master'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: build-${{ github.run_number }}
-          name: "libimgui_unity arm64-v8a (build ${{ github.run_number }})"
+          name: "libinjection.so arm64-v8a (build ${{ github.run_number }})"
           body: |
-            **PixelStrike3D — ImGui Native Plugin**
-            Package: `com.pixellabs.pixelstrike3d`
-            ABI: `arm64-v8a` | Backend: OpenGL ES 3.0
+            **com.pixellabs.pixelstrike3d**
+            ABI: arm64-v8a | Backend: OpenGL ES 3.0
             Commit: ${{ github.sha }}
 
-            Drop into Unity project:
-            `Assets/Plugins/Android/arm64-v8a/libimgui_unity.so`
-          files: unity_plugin/build/libimgui_unity.so
+            Drop into: Assets/Plugins/Android/arm64-v8a/libinjection.so
+          files: unity_plugin/build/libinjection.so
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
