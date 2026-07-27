@@ -783,6 +783,9 @@ void RenderOverlay() {
 // ==========================================================
 extern "C" {
 
+// Forward declaration
+bool injection_init();
+
 // OnCreate entry point — called from UnityPlayerActivity.onCreate()
 JNIEXPORT void JNICALL
 Java_com_pixellabs_pixelstrike3d_ImGuiPlugin_onCreate(JNIEnv*, jobject) {
