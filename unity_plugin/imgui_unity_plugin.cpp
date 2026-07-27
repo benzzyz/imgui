@@ -788,6 +788,7 @@ JNIEXPORT void JNICALL
 Java_com_pixellabs_pixelstrike3d_ImGuiPlugin_onCreate(JNIEnv*, jobject) {
     LOGI("onCreate — com.pixellabs.pixelstrike3d");
     InstallHooks();
+    injection_init();
 }
 
 bool injection_init() {
