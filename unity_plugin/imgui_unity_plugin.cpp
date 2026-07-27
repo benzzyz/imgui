@@ -570,7 +570,7 @@ void RenderMainMenu() {
     ImGui::Dummy({0,r*2+10});
     const char* title="E C L I P S E";
     ImGui::SetCursorPosX((sw-ImGui::CalcTextSize(title).x)*0.5f);
-    ImGui::TextColored(COLOR_ACCENT,title);
+    ImGui::TextColored(COLOR_ACCENT,"%s",title);
     ImGui::Dummy({0,25});
     const char* tabs[]={"Visuals","Silent Aim","Misc"};
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,ImVec2(0,0));
